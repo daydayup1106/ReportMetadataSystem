@@ -1,0 +1,84 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+.vscode/
+
+# Java / Gradle
+.gradle/
+build/
+out/
+bin/
+target/
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+replay_pid*
+
+# Logs / temp
+logs/
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.secret
+*.key
+*.pem
+
+# Spring Boot local files
+application-local.yml
+application-local.yaml
+application-dev.yml
+application-dev.yaml
+application-secrets.yml
+application-secrets.yaml
+
+# Frontend
+node_modules/
+dist/
+.npm/
+.pnpm-store/
+.yarn/
+coverage/
+
+# Python sidecar / ML
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+.cache/
+
+# Model / embedding caches
+model_cache/
+huggingface_cache/
+sentence_transformers/
+
+# Local data / storage
+data/
+uploads/
+exports/
+backups/
+mongodb_data/
+redis_data/
+milvus_data/
+milvus_minio_data/
+minio_data/
+etcd_data/
+volumes/
+
+# Test outputs
+test-output/
+test-results/
+reports/
+
