@@ -1,0 +1,176 @@
+# ===========================================================================
+# Report Migration — Shared Configuration (all profiles)
+# ===========================================================================
+# Profile-specific overrides: application-local.yml, application-prod.yml
+# Activate profile: --spring.profiles.active=local
+# ===========================================================================
+
+spring:
+  application:
+    name: report-migration
+
+  # ---------- Virtual Threads (Java 21) ----------
+  # Interview: Virtual threads replace platform threads for I/O-bound workloads.
+  # Every request handler runs on a virtual thread — no thread pool tuning needed.
+  # This is critical for our app: MongoDB queries, Redis calls, HTTP to embedding
+  # service, and LLM API calls are ALL I/O-bound.
+  threads:
+    virtual:
+      enabled: true
+
+  # ---------- MongoDB & Redis ----------
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/report_migration}
+      auto-index-creation: false  # We manage indexes explicitly via MongoConfig
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 3s
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+
+  # ---------- Servlet / File Upload ----------
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+
+  # ---------- Jackson ----------
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+# ===========================================================================
+# Server
+# ===========================================================================
+server:
+  port: 8080
+  shutdown: graceful
+  tomcat:
+    connection-timeout: 10s
+
+# ===========================================================================
+# Actuator — Health & Monitoring
+# ===========================================================================
+# Interview: Actuator exposes operational endpoints. In production, only
+# health and info are exposed via web; prometheus is exposed for scraping.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+  health:
+    mongo:
+      enabled: true
+    redis:
+      enabled: true
+
+# ===========================================================================
+# SpringDoc — API Documentation
+# ===========================================================================
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+
+# ===========================================================================
+# Logging
+# ===========================================================================
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{requestId:-}] %-5level %logger{36} - %msg%n"
+  level:
+    root: INFO
+    com.luoyu.report: INFO
+    org.springframework.data.mongodb: WARN
+    io.milvus: WARN
+
+# ===========================================================================
+# Application Custom Properties
+# ===========================================================================
+app:
+  # ---------- LLM (Claude / Anthropic) ----------
+  llm:
+    provider: anthropic
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY:}
+      model-name: ${LLM_MODEL:claude-sonnet-4-20250514}
+      max-tokens: 4096
+      temperature: 0.1
+      timeout: 30s
+      max-retries: 1
+
+  # ---------- Embedding Service (BGE-M3 Sidecar) ----------
+  embedding:
+    base-url: ${EMBEDDING_SERVICE_URL:http://localhost:8001}
+    embed-path: /embed
+    rerank-path: /rerank
+    timeout: 10s
+    max-retries: 2
+    dimension: 1024       # bge-m3 output dimension
+    health-cache-ttl: 30s # cache sidecar health status in Redis
+
+  # ---------- Milvus ----------
+  milvus:
+    host: ${MILVUS_HOST:localhost}
+    port: ${MILVUS_PORT:19530}
+    collection-name: report_metadata_chunks
+    index-type: HNSW
+    metric-type: COSINE
+    search-top-k: 20
+    rerank-top-k: 5
+
+  # ---------- MinIO / S3 ----------
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:admin}
+    secret-key: ${MINIO_SECRET_KEY:admin123456}
+    bucket-name: ${MINIO_BUCKET:report-migration}
+
+  # ---------- Rate Limiting ----------
+  rate-limit:
+    upload:
+      capacity: 5
+      refill-tokens: 5
+      refill-duration: 1m
+    batch:
+      capacity: 3
+      refill-tokens: 3
+      refill-duration: 1m
+    chat:
+      capacity: 10
+      refill-tokens: 10
+      refill-duration: 1m
+
+  # ---------- Timeouts ----------
+  timeout:
+    llm: 30s
+    embedding: 10s
+    database: 5s
+
+  # ---------- Chat / Memory ----------
+  chat:
+    short-term-memory-size: 20     # sliding window: recent N messages
+    session-ttl: 30m               # Redis session TTL
+    max-tool-hops: 3               # max tool calls per chat turn
+    sse-heartbeat-interval: 15s
+
+  # ---------- Feature Flags ----------
+  feature:
+    embedding-enabled: true
+    rerank-enabled: true
+    ai-validation-enabled: true

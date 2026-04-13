@@ -1,0 +1,154 @@
+# ===========================================================================
+# Report Migration — Local Development Environment
+# ===========================================================================
+# Usage:  docker compose up -d
+# Stop:   docker compose down
+# Reset:  docker compose down -v   (deletes all data volumes)
+# ===========================================================================
+
+services:
+
+  # ---- MongoDB 7.0 ----
+  # Business data: reports, roles, configs, snapshots, audit logs
+  mongodb:
+    image: mongo:7.0
+    container_name: report-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: reportMigration
+    healthcheck:
+      test: mongosh --eval "db.adminCommand('ping')" --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- Redis 7 ----
+  # Sessions, short-term memory, rate limiting, idempotency, feature flags
+  redis:
+    image: redis:7-alpine
+    container_name: report-redis
+    ports:
+      - "5919:5917"
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ---- Milvus Dependencies: etcd ----
+  # Milvus metadata store
+  milvus-etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    container_name: report-milvus-etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_LOG_LEVEL: warn
+    volumes:
+      - etcd_data:/etcd
+    command:
+      - etcd
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --data-dir=/etcd
+
+  # ---- Milvus Dependencies: internal MinIO ----
+  # Milvus uses its own MinIO for segment storage (separate from app MinIO)
+  milvus-minio:
+    image: minio/minio:RELEASE.2024-09-22T00-33-43Z
+    container_name: report-milvus-minio
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    command: minio server /data --quiet
+    volumes:
+      - milvus_minio_data:/data
+    healthcheck:
+      test: curl -f http://localhost:9000/minio/health/live || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ---- Milvus 2.5 (standalone) ----
+  # Vector store for RAG retrieval
+  milvus:
+    image: milvusdb/milvus:v2.5.6
+    container_name: rm-milvus
+    depends_on:
+      milvus-etcd:
+        condition: service_started
+      milvus-minio:
+        condition: service_healthy
+    ports:
+      - "19530:19530"   # gRPC
+      - "9091:9091"     # metrics
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+    volumes:
+      - milvus_data:/var/lib/milvus
+    healthcheck:
+      test: curl -f http://localhost:9091/healthz || exit 1
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---- MinIO (Application file storage) ----
+  # Stores: raw Excel uploads, export ZIP packages
+  minio:
+    image: minio/minio:RELEASE.2024-09-22T00-33-43Z
+    container_name: rm-minio
+    ports:
+      - "9000:9000"     # S3 API
+      - "9001:9001"     # Web console
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: admin123456
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: curl -f http://localhost:9000/minio/health/live || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ---- Embedding + Rerank Sidecar ----
+  # BGE-M3 embedding + BGE-reranker-v2-m3, Python FastAPI service
+  # Build context will be created in Phase 5
+  # Uncomment when embedding-service/ directory is ready:
+  #
+  # embedding-service:
+  #   build: ./embedding-service
+  #   container_name: rm-embedding
+  #   ports:
+  #     - "8001:8001"
+  #   environment:
+  #     MODEL_NAME: BAAI/bge-m3
+  #     RERANKER_NAME: BAAI/bge-reranker-v2-m3
+  #     DEVICE: cpu
+  #   volumes:
+  #     - model_cache:/root/.cache/huggingface
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 4G
+  #   healthcheck:
+  #     test: curl -f http://localhost:8001/health || exit 1
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 120s
+
+volumes:
+  mongodb_data:
+  etcd_data:
+  milvus_minio_data:
+  milvus_data:
+  minio_data:
+  # model_cache:          # uncomment with embedding-service
