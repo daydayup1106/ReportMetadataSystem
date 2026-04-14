@@ -1,15 +1,15 @@
 # ===========================================================================
-# Report Migration — Local Development Environment
+# Report Migration — Local Development (Docker services only)
 # ===========================================================================
+# MongoDB and Redis run locally (already installed on host).
+# This file runs only Milvus + MinIO via Docker.
+#
 # Usage:  docker compose up -d
 # Stop:   docker compose down
 # Reset:  docker compose down -v   (deletes all data volumes)
 # ===========================================================================
 
 services:
-
-  # ---- MongoDB 7.0 ----
-  # Business data: reports, roles, configs, snapshots, audit logs
   mongodb:
     image: mongo:7.0
     container_name: report-mongodb
@@ -24,22 +24,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    profiles: [full]
 
-  # ---- Redis 7 ----
-  # Sessions, short-term memory, rate limiting, idempotency, feature flags
   redis:
     image: redis:7-alpine
     container_name: report-redis
     ports:
-      - "5919:5917"
+      - "6379:6379"
     healthcheck:
       test: redis-cli ping
       interval: 10s
       timeout: 3s
       retries: 5
+    profiles: [full]
 
   # ---- Milvus Dependencies: etcd ----
-  # Milvus metadata store
+  # Milvus metadata store (internal only, no host port needed)
   milvus-etcd:
     image: quay.io/coreos/etcd:v3.5.18
     container_name: report-milvus-etcd
@@ -57,7 +57,7 @@ services:
       - --data-dir=/etcd
 
   # ---- Milvus Dependencies: internal MinIO ----
-  # Milvus uses its own MinIO for segment storage (separate from app MinIO)
+  # Milvus segment storage (internal only, not your app's MinIO)
   milvus-minio:
     image: minio/minio:RELEASE.2024-09-22T00-33-43Z
     container_name: report-milvus-minio
@@ -84,7 +84,7 @@ services:
       milvus-minio:
         condition: service_healthy
     ports:
-      - "19530:19530"   # gRPC
+      - "19530:19530"   # gRPC — your Java app connects here
       - "9091:9091"     # metrics
     environment:
       ETCD_ENDPOINTS: milvus-etcd:2379
@@ -104,8 +104,8 @@ services:
     image: minio/minio:RELEASE.2024-09-22T00-33-43Z
     container_name: rm-minio
     ports:
-      - "9000:9000"     # S3 API
-      - "9001:9001"     # Web console
+      - "9000:9000"     # S3 API — your Java app connects here
+      - "9001:9001"     # Web console — http://localhost:9001
     environment:
       MINIO_ROOT_USER: admin
       MINIO_ROOT_PASSWORD: admin123456
@@ -119,9 +119,7 @@ services:
       retries: 3
 
   # ---- Embedding + Rerank Sidecar ----
-  # BGE-M3 embedding + BGE-reranker-v2-m3, Python FastAPI service
-  # Build context will be created in Phase 5
-  # Uncomment when embedding-service/ directory is ready:
+  # Uncomment when embedding-service/ directory is ready (Phase 5):
   #
   # embedding-service:
   #   build: ./embedding-service

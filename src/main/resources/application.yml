@@ -26,6 +26,7 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}    # empty = no auth (local dev), set in prod
       timeout: 3s
       lettuce:
         pool:
@@ -51,7 +52,7 @@ spring:
 # Server
 # ===========================================================================
 server:
-  port: 8080
+  port: 7779
   shutdown: graceful
   tomcat:
     connection-timeout: 10s
@@ -115,14 +116,14 @@ app:
       max-retries: 1
 
   # ---------- Embedding Service (BGE-M3 Sidecar) ----------
-  embedding:
-    base-url: ${EMBEDDING_SERVICE_URL:http://localhost:8001}
-    embed-path: /embed
-    rerank-path: /rerank
-    timeout: 10s
-    max-retries: 2
-    dimension: 1024       # bge-m3 output dimension
-    health-cache-ttl: 30s # cache sidecar health status in Redis
+#  embedding:
+#    base-url: ${EMBEDDING_SERVICE_URL:http://localhost:8001}
+#    embed-path: /embed
+#    rerank-path: /rerank
+#    timeout: 10s
+#    max-retries: 2
+#    dimension: 1024       # bge-m3 output dimension
+#    health-cache-ttl: 30s # cache sidecar health status in Redis
 
   # ---------- Milvus ----------
   milvus:

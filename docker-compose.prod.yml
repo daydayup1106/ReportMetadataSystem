@@ -1,0 +1,188 @@
+services:
+  app:
+    image: ${REPORT_APP_IMAGE:-report-migration:latest}
+    container_name: report-app
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-7779}:7779"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      MONGODB_URI: ${MONGODB_URI:-mongodb://report_app:change-this-app-mongo-password@mongodb:27017/report_migration?authSource=admin}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      MILVUS_HOST: ${MILVUS_HOST:-milvus}
+      MILVUS_PORT: ${MILVUS_PORT:-19530}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET:-report-migration}
+      EMBEDDING_SERVICE_URL: ${EMBEDDING_SERVICE_URL:-http://embedding-service:8001}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-claude-sonnet-4-20250514}
+    networks:
+      - report-net
+
+  mongodb:
+    image: mongo:7.0
+    container_name: report-mongodb
+    restart: unless-stopped
+    command: ["mongod", "--bind_ip_all", "--auth"]
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongo/init:/docker-entrypoint-initdb.d:ro
+    environment:
+      MONGO_INITDB_DATABASE: report_migration
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh -u \"$MONGO_ROOT_USERNAME\" -p \"$MONGO_ROOT_PASSWORD\" --authenticationDatabase admin --eval \"db.adminCommand('ping')\" --quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - report-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: report-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - report-net
+
+  milvus-etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    container_name: report-milvus-etcd
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_LOG_LEVEL: warn
+    volumes:
+      - etcd_data:/etcd
+    command:
+      - etcd
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --data-dir=/etcd
+    networks:
+      - report-net
+
+  milvus-minio:
+    image: minio/minio:RELEASE.2024-09-22T00-33-43Z
+    container_name: report-milvus-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    command: minio server /data --quiet
+    volumes:
+      - milvus_minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - report-net
+
+  milvus:
+    image: milvusdb/milvus:v2.5.6
+    container_name: rm-milvus
+    restart: unless-stopped
+    depends_on:
+      milvus-etcd:
+        condition: service_started
+      milvus-minio:
+        condition: service_healthy
+    ports:
+      - "${MILVUS_GRPC_PORT:-19530}:19530"
+      - "${MILVUS_METRICS_PORT:-9091}:9091"
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+    volumes:
+      - milvus_data:/var/lib/milvus
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9091/healthz || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - report-net
+
+  minio:
+    image: minio/minio:RELEASE.2024-09-22T00-33-43Z
+    container_name: rm-minio
+    restart: unless-stopped
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - report-net
+
+  # Enable only when the embedding-service image is ready.
+  # If you do not run semantic retrieval in production yet, comment this service
+  # out and also override EMBEDDING_SERVICE_URL accordingly.
+  embedding-service:
+    image: ${EMBEDDING_SERVICE_IMAGE:-report-migration-embedding:latest}
+    container_name: rm-embedding
+    restart: unless-stopped
+    ports:
+      - "${EMBEDDING_PORT:-8001}:8001"
+    environment:
+      MODEL_NAME: ${EMBEDDING_MODEL_NAME:-BAAI/bge-m3}
+      RERANKER_NAME: ${RERANKER_MODEL_NAME:-BAAI/bge-reranker-v2-m3}
+      DEVICE: ${EMBEDDING_DEVICE:-cpu}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    networks:
+      - report-net
+
+volumes:
+  mongodb_data:
+  redis_data:
+  etcd_data:
+  milvus_minio_data:
+  milvus_data:
+  minio_data:
+
+networks:
+  report-net:
+    driver: bridge

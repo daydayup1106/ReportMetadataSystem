@@ -446,6 +446,30 @@ public class SomeService {
 
 ---
 
+### Q24: Spring Boot 的 `application.yml` 和 `application-{profile}.yml` 是怎么生效的？
+
+**Answer:**
+Spring Boot 加载配置时，基本顺序是：
+
+1. `application.yml`
+2. `application-{profile}.yml`
+
+其中：
+- `application.yml` 提供共享默认值
+- `application-{profile}.yml` 会在它上面继续加载，并覆盖同名配置
+
+“覆盖”的意思是：
+- 如果默认配置里是 `INFO`
+- `application-local.yml` 里把同一个键改成了 `DEBUG`
+- 那最终生效的是 `DEBUG`
+
+如果某个配置项只在 `application.yml` 里有，而 `application-local.yml` 没写，那么最终仍然使用默认配置里的值。
+
+面试时可以直接总结一句：
+"`application.yml` 负责放共享默认值，profile 配置文件只覆盖自己关心的那部分，没有重写的配置继续沿用默认值。"
+
+---
+
 ## Records
 
 _New entries will be added as we build each module._

@@ -82,3 +82,4 @@ test-output/
 test-results/
 reports/
 
+/.claude/
